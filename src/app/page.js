@@ -1,101 +1,148 @@
-import Image from "next/image";
+"use client"
+import { useEffect, useRef, useState } from "react";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
+import "@tensorflow/tfjs";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.js
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const runDetection = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Check if getUserMedia is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera access is not supported in your browser");
+      }
+
+      // Request camera access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "user" }
+      });
+
+      videoRef.current.srcObject = stream;
+
+      // Wait for video metadata to load
+      await new Promise((resolve) => {
+        videoRef.current.onloadedmetadata = () => {
+          resolve();
+        };
+      });
+
+      // Load the model
+      const model = await cocoSsd.load();
+
+      // Start detection (loading will be set to false after first frame)
+      detectFrame(videoRef.current, model);
+
+    } catch (err) {
+      setLoading(false);
+      
+      // Handle specific error types
+      if (err.name === "NotAllowedError") {
+        setError("Camera access denied. Please allow camera permissions and refresh the page.");
+      } else if (err.name === "NotFoundError") {
+        setError("No camera found on your device.");
+      } else if (err.name === "NotReadableError") {
+        setError("Camera is already in use by another application.");
+      } else {
+        setError(err.message || "Failed to start camera. Please try again.");
+      }
+      console.error("Camera error:", err);
+    }
+  }
+
+  const detectFrame = (video, model) => {
+    model.detect(video).then((predictions) => {
+      // Hide loading after first successful detection
+      setLoading(false);
+      
+      renderPredictions(predictions);
+
+      requestAnimationFrame(() => {
+        detectFrame(video, model);
+      });
+    }).catch((err) => {
+      console.error("Detection error:", err);
+      setLoading(false);
+    });
+  };
+
+  const renderPredictions = (predictions) => {
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    const font = "16px sans-serif";
+    ctx.font = font;
+    ctx.textBaseline = "top";
+
+    predictions.forEach((prediction) => {
+      const [x, y, width, height] = prediction.bbox;
+
+      ctx.strokeStyle = "#818cf8";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(x, y, width, height);
+
+      ctx.fillStyle = "#818cf8";
+      const textWidth = ctx.measureText(prediction.class).width;
+      ctx.fillRect(x, y, textWidth + 7, parseInt(font, 10) + 4);
+
+      ctx.fillStyle = "#fff";
+      ctx.fillText(prediction.class, x, y);
+    });
+  };
+
+  useEffect(() => {
+    runDetection();
+
+    // Cleanup function to stop video stream
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+
+  return (
+    <div className="relative h-screen flex justify-center items-center bg-indigo-400 pt-16">
+      {loading && (
+        <div className="absolute z-20 bg-white/90 px-6 py-4 rounded-lg shadow-lg">
+          <p className="text-indigo-600 font-semibold">Loading camera and AI model...</p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+      )}
+
+      {error && (
+        <div className="absolute z-20 bg-red-500 text-white px-6 py-4 rounded-lg shadow-lg max-w-md text-center">
+          <p className="font-semibold mb-2">⚠️ Error</p>
+          <p>{error}</p>
+        </div>
+      )}
+
+      {!error && (
+        <>
+          <video 
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 border-8 border-dashed rounded-xl" 
+            width={500} 
+            height={350} 
+            autoPlay 
+            ref={videoRef} 
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
+          <canvas 
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" 
+            width={500} 
+            height={350}
+            ref={canvasRef}
           />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        </>
+      )}
     </div>
   );
 }
